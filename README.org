@@ -206,8 +206,8 @@ This [[https://fasttext.cc/][fastText]] 0.9.2 model operates on disassembled tex
 - dim: 30
 - wordNgrams: 5
 
-** WalkyBlocky
-Confusion matrix for WalkyBlocky model...
+** Block-Walk Embedding
+Confusion matrix for Block-Walk embedding model:
 
 #+ATTR_HTML: :width 80%
 #+begin_src python :results file :exports results
