@@ -1,0 +1,67 @@
+:PROPERTIES:
+:header-args:python: /sshx:txc:/home/ashroyer/mambaforge/envs/dev/bin/python3
+:END:
+
+* Accuracy and Run-Time (obfuscated/obfuscated)
+knn has $O(n^2)$ time complexity.
+However, the value of n matters.
+
+#+begin_src python :results file :exports results
+import matplotlib.pyplot as plt
+import matplotlib.text as mtext
+import numpy as np
+import pandas as pd
+import seaborn as sb
+
+df1 = pd.read_csv('strip-save.csv')
+df1['type'] = 'strip'
+df1['ttsize'] = df1['N train']+df1['N test']
+
+df2 = pd.read_csv('plain-save.csv')
+df2['type'] = 'plain'
+df2['ttsize'] = df2['N train']+df2['N test']
+
+df = pd.concat([df2,df1])
+sb.set_style('darkgrid')
+palette = sb.color_palette("mako_r",3)
+
+
+sb.set(rc={'figure.figsize':(7,6)})
+g1 = sb.lineplot(x='ttsize', y='accuracy', hue='neighbors', style='type', data=df, palette=palette)
+g1.set(xlabel='sample size (train+test)')
+g2 = sb.lineplot(x='ttsize', y='run time (s)', label='run time', color='C3', style='type', data=df, ax=g1.axes.twinx())
+# g2.lines[0].set_linestyle('--')
+g2.grid(which='both', visible=False)
+
+# thanks https://stackoverflow.com/a/71540238/2037637
+class LegendTitle(object):
+ def __init__(self, text_props=None):
+  self.text_props = text_props or {}
+  super(LegendTitle, self).__init__()
+
+ def legend_artist(self, legend, orig_handle, fontsize, handlebox):
+  x0, y0 = handlebox.xdescent, handlebox.ydescent
+  title = mtext.Text(x0, y0, orig_handle,  **self.text_props)
+  handlebox.add_artist(title)
+  return title
+
+h1,l1 = g1.get_legend_handles_labels()
+h2,l2 = g2.get_legend_handles_labels()
+g1.legend(
+ [h2[0],'']     +['neighbors']+h1[1:4]+['','symbols']+h1[5:8],
+ ['run time','']+['']         +l1[1:4]+['','']       +l1[5:8],
+ handler_map={str:LegendTitle({'fontsize':11})},
+)
+g2.get_legend().remove()
+
+plt.tight_layout()
+plt.savefig('plot.png')
+plt.savefig('../../paper/images/gzip-knn-acc-runtime.pdf')
+return 'plot.png'
+#+end_src
+
+#+RESULTS:
+[[file:plot.png]]
+
+* Plain/Plain
+Let's see how well we can predict the function when trained on Plain (not obfuscated) code and predicting Plain.

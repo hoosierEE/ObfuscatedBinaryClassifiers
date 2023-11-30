@@ -1,0 +1,80 @@
+#+title: Readme
+
+
+#+begin_src python :results file :exports results
+from matplotlib import colormaps
+import matplotlib.pyplot as plt
+import numpy as np
+import pickle
+
+with open('../pdqd.pkl','rb') as f:
+  pq = pickle.load(f)
+
+# print(pq['keys'])
+# fig,ax0 = plt.subplots()
+# progress = 0
+# for name,dots in pq[0.4]:
+#   plt.scatter(range(progress,progress+len(dots)), dots, label=name)
+progress = 0
+fig,ax = plt.subplots(figsize=(12,4))
+# for name,dots in list(pq[0.4].items())[5:10]:
+progs = 'strings nano ncat nm wannacry petya0 petya1'.split()
+# colors = cmap(np.linspace(0.05,0.95,len(progs)))
+# colors = '#003399 #0077ff #002288 #11aabb #ff0022 #ff7733 #ff1177'.split()
+bg = colormaps['bone'](np.linspace(0.1,0.8,4)).tolist()
+rd = colormaps['gist_heat'](np.linspace(0.4,0.8,3)).tolist()
+for i,(name,color) in enumerate(zip(progs,bg+rd)):
+  dots = pq[0.4][name]
+  progress += 50*(i>0)
+  plt.scatter(range(progress,progress+len(dots)), dots, color=color, label=name, marker='v'if i>3 else'o')
+  progress += len(dots)
+
+legend = plt.legend(loc='upper center',ncol=len(progs),bbox_to_anchor=(0.5,1.08))
+legend.get_frame().set_alpha(1.0)
+ax.grid(True,linestyle='dashed')
+ax.set_yticks(range(len(pq['keys'])))
+ax.set_xticks([])
+ax.set_yticklabels(list(pq['keys'].values()))
+ax.set_xlabel('relative basic block index')
+ax.set_ylabel('predicted training function')
+plt.tight_layout()
+plt.savefig('strideN.png')
+plt.savefig('../../paper/img/strideN.pdf')
+return 'strideN.png'
+#+end_src
+
+#+RESULTS:
+[[file:tmp.png]]
+
+
+
+#+begin_src python :results file :exports results
+from matplotlib import colormaps
+import matplotlib.pyplot as plt
+import numpy as np
+import pickle
+with open('../pdqd.pkl','rb') as f: pq = pickle.load(f)
+func = 'petya0'
+fig,(ax0,ax1) = plt.subplots(1,2,figsize=(12,4),sharey=True)
+dots = pq[0.7][func]
+ax0.scatter(range(len(dots)), dots, marker='v', color='#ff3300')
+dots = pq[0.4][func]
+ax1.scatter(range(len(dots)), dots, marker='v', color='#ff3300')
+ax0.title.set_text('threshold=0.7')
+ax1.title.set_text('threshold=0.4')
+ax0.set_ylabel('predicted training function')
+for ax in (ax0,ax1):
+    ax.grid(True,linestyle='dashed')
+    ax.set_yticks(range(len(pq['keys'])))
+    ax.set_xticks([])
+    ax.set_yticklabels(list(pq['keys'].values()))
+    ax.set_xlabel('relative basic block index')
+
+plt.tight_layout()
+plt.savefig('stride1.png')
+plt.savefig('../../paper/img/stride1.pdf')
+return 'stride1.png'
+#+end_src
+
+#+RESULTS:
+[[file:stride1.png]]

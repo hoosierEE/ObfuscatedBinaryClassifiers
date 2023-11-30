@@ -1,0 +1,126 @@
+# :PROPERTIES:
+# :header-args:python: /sshx:txc:/home/ashroyer/mambaforge/envs/dev/bin/python3
+# :END:
+
+* Byte Count Data
+This experiment reads the raw bytes of the object files and creates a data sample by counting the occurrence of each byte value in the object file.
+The images below highlight a subset of the total data.
+There is one training example (function) per row, and functions are grouped alphabetically.
+The normalized plot divides by the column mean, and the normalized/max divides by the column max to let uncommon byte patterns stand out.
+
+#+begin_src python :results none :exports none
+from forest import toy
+from collections import defaultdict
+import numpy as np
+import json
+
+model,Xtf,ytest = toy()
+labels = sorted(set(ytest))
+d = defaultdict(list)
+for i,y in enumerate(ytest):
+ d[y].append(Xtf[i])
+
+mat = np.r_[*[d[i] for i in labels]]
+idx = 0
+tks = []
+for i in labels:
+ idx += len(d[i])
+ tks.append(idx)
+
+with open('data.json', 'w', encoding='utf-8') as f:
+ json.dump([labels,tks], f)
+
+np.save('mat.npy', mat)
+#+end_src
+
+
+#+begin_src python :results file :exports results
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import json
+ep = 1e-5
+aspect = None
+mat = np.load('mat.npy')+ep
+with open('data.json') as f: labels,tks = json.load(f)
+fig,ax = plt.subplots(1,2, sharey=True, figsize=(10,10), constrained_layout=True)
+plt.yticks([x-1 for x in tks], labels)
+m1 = mat/mat.sum(0)
+m2 = (mat/mat.sum(0)) / mat.max(1,keepdims=True)
+
+cmap = sns.cm.mako_r
+ax[0].imshow(m1, aspect=aspect, cmap=cmap)
+ax[0].set_title('normalized')
+ax[1].imshow(m2, aspect=aspect, cmap=cmap)
+ax[1].set_title('normalized/max')
+for i in range(2):
+ ax[i].set_xlabel('byte value')
+
+plt.savefig('byte_count.png', bbox_inches='tight')
+plt.savefig('../../paper/images/byte_count.pdf', bbox_inches='tight')
+return 'byte_count.png'
+#+end_src
+
+#+RESULTS:
+[[file:byte_count.png]]
+
+Similarities between different samples for the same function appear as similarly-colored horizontal bands.
+Next, we train a classifier to notice these intra-function similarities and inter-function differences.
+
+
+* Classifier
+
+The tables below summarize the quality of a [[https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html][random forest classifier]] using the raw byte-count data described above.
+Here, =all= indicates obfuscated compiled object files, and =plain= indicates object files compiled without obfuscation.
+
+First we run these comparisons without limiting the number of samples per function class.
+The best results are when training using the full set of obfuscated functions and predicting the not-obfuscated functions.
+Here the model achieves perfect results.
+
+#+begin_src python :results output raw drawer :exports results
+from forest import *
+table(estimators=40)
+#+end_src
+
+#+CAPTION: No limit
+| train     (N) | test     (N) | accuracy | precision | recall |   f1 |
+|---------------+--------------+----------+-----------+--------+------|
+| all   (14592) | all   (3648) |     0.98 |      0.98 |   0.98 | 0.98 |
+| all   (14592) | plain  (152) |     1.00 |      1.00 |   1.00 | 1.00 |
+| plain   (152) | all   (3648) |     0.68 |      0.72 |   0.67 | 0.67 |
+| plain   (122) | plain   (30) |     0.97 |      0.57 |   0.57 | 0.56 |
+
+
+Next we repeat the above experiment, but this time without limiting the number of samples to at most 100 per function class.
+
+#+begin_src python :results output raw drawer :exports results
+from forest import *
+table(estimators=40, limit=100)
+#+end_src
+
+#+CAPTION: Limit 100
+| train     (N) | test     (N) | accuracy | precision | recall |   f1 |
+|---------------+--------------+----------+-----------+--------+------|
+| all    (3040) | all    (760) |     0.96 |      0.96 |   0.96 | 0.96 |
+| all    (3040) | plain  (152) |     1.00 |      1.00 |   1.00 | 1.00 |
+| plain   (152) | all    (760) |     0.68 |      0.74 |   0.70 | 0.68 |
+| plain   (122) | plain   (30) |     0.97 |      0.57 |   0.57 | 0.56 |
+
+
+Finally we again use a limit of 100 samples, but this time we train with a subset of the available function classes.
+S_{a} discards 1/3 of the classes, S_{b} discards 1/2, and S_{c} discards 2/3.
+
+#+begin_src python :results output raw drawer :exports results
+from forest import *
+table(estimators=40, limit=100, partial=True)
+#+end_src
+
+#+CAPTION: Subset of training data
+| train     (N) | test     (N) | accuracy | precision | recall |   f1 |
+|---------------+--------------+----------+-----------+--------+------|
+| S_{a}  (2600) | all    (760) |     0.68 |      0.54 |   0.68 | 0.58 |
+| S_{b}  (1900) | all    (760) |     0.50 |      0.31 |   0.50 | 0.36 |
+| S_{c}  (1200) | all    (760) |     0.31 |      0.13 |   0.31 | 0.17 |
+| S_{a}  (2600) | plain  (152) |     0.68 |      0.57 |   0.68 | 0.60 |
+| S_{b}  (1900) | plain  (152) |     0.50 |      0.33 |   0.50 | 0.38 |
+| S_{c}  (1200) | plain  (152) |     0.32 |      0.16 |   0.32 | 0.20 |

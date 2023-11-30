@@ -1,0 +1,20 @@
+#+title: FastText Predictions
+
+Usage:
+#+begin_src sh
+py predict.py disasm.train disasm.test --model ft.bin --autotune 3600  #auto-tune for 1 hour to create ft.bin
+py predict.py disasm.train disasm.test --model ft.bin #run this model
+#+end_src
+
+Ideas:
+- compare with random forest
+- fasttext, but with raw bytes as input
+- how about a transformer/byteformer model?
+- k-window scan through larger program, fir/viterbi for sticky prediction (training data is ONLY discrete functions)
+
+  #+begin_src sh :results none :exports none
+  name="distok"
+  /home/ashroyer/mambaforge/envs/dev/bin/python3 predict.py distok.train $name.test --model $name-1200.bin --threshold 0.5 --at 5
+  # return "../../paper/images/fasttext-$name-1200.bin.pdf"
+  #+end_src
+

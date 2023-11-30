@@ -1,0 +1,156 @@
+#+title: Visuals
+* musl
+First we create a list of "functions of interest" which we want to classify (e.g. =memcmp=, =fputs=, ...).
+We then build musl-1.2.4 and capture the Makefile's output in a text file.
+Next we extract the compile command for each of the functions of interest from the makefile.
+After removing some unused options, we end up with a compile command similar to this one for =memcmp=:
+#+begin_example
+gcc -std=c99 -nostdinc -ffreestanding -D_XOPEN_SOURCE=700 -Imusl-1.2.4/arch/x86_64 -Imusl-1.2.4/arch/generic -Iobj/src/internal -Imusl-1.2.4/src/include -Imusl-1.2.4/src/internal -Iobj/include -Imusl-1.2.4/include -fPIC -c -o obj/src/string/memcmp.lo musl-1.2.4/src/string/memcmp.c
+#+end_example
+
+We make a new C file with the Tigress boilerplate (such as =#include "tigress.h"=), add the Tigress directory as an include path, and recompile as a new object file:
+#+begin_example
+gcc -std=c99 -nostdinc -ffreestanding -D_XOPEN_SOURCE=700 -Imusl-1.2.4/arch/x86_64 -Imusl-1.2.4/arch/generic -Iobj/src/internal -Imusl-1.2.4/src/include -Imusl-1.2.4/src/internal -Iobj/include -Imusl-1.2.4/include -I/usr/local/bin/tigresspkg/3.3.3 -fPIC -c -o dst/output-123.o /tmp/tigress-input-123.c
+#+end_example
+
+* Which object files should we keep?
+Sometimes the function of interest is missing from our object file; we discard those from our dataset.
+For example, this function compiled without errors, but is missing its namesake =tan=:
+#+begin_src sh :results output :wrap example :exports both
+wc -c tmp/dataset/BranchRndArgsInline-Plain-tan.o
+objdump -d tmp/dataset/BranchRndArgsInline-Plain-tan.o
+#+end_src
+
+#+RESULTS:
+#+begin_example
+1472 tmp/dataset/BranchRndArgsInline-Plain-tan.o
+
+tmp/dataset/BranchRndArgsInline-Plain-tan.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <init_tigress>:
+   0:	f3 0f 1e fa          	endbr64
+   4:	55                   	push   %rbp
+   5:	48 89 e5             	mov    %rsp,%rbp
+   8:	90                   	nop
+   9:	5d                   	pop    %rbp
+   a:	c3                   	ret
+
+000000000000000b <megaInit>:
+   b:	f3 0f 1e fa          	endbr64
+   f:	55                   	push   %rbp
+  10:	48 89 e5             	mov    %rsp,%rbp
+  13:	90                   	nop
+  14:	90                   	nop
+  15:	90                   	nop
+  16:	90                   	nop
+  17:	5d                   	pop    %rbp
+  18:	c3                   	ret
+#+end_example
+
+Which files are missing their function like this?
+A rough approximation is just to examine file sizes.
+Files which have their function of interest are larger than those which do not.
+
+#+begin_src python :results file :exports results
+from glob import glob
+from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import pandas as pd
+plt.close('all')
+fig,(ax0,ax1) = plt.subplots(2,1)
+paths = list(Path('tmp/dataset').glob('*.o'))
+plain = [x for x in paths if 'Plain-Plain' in x.stem]
+obfs = [x for x in paths if 'Plain-Plain' not in x.stem]
+so = np.array(sorted(x.stat().st_size for x in obfs))
+sp = np.array(sorted(x.stat().st_size for x in plain))
+# df = pd.DataFrame({'type':isplain,'sizes':sizes})
+
+sns.histplot(so, element='step', binwidth=200, fill=True, ax=ax0, color='#4fc5ad')
+sns.histplot(sp, element='step', binwidth=100, fill=True, ax=ax1, color='#357aa2')
+ax0.set(xlim=(0,20000))
+ax0.set_xlabel('obfuscated file size (bytes)')
+ax1.set_xlabel('plain file size (bytes)')
+plt.tight_layout()
+plt.savefig('hist-full.png')
+plt.savefig('../../paper/img/object-filesize-histogram.pdf')
+return 'hist-full.png'
+#+end_src
+
+#+RESULTS:
+[[file:hist-full.png]]
+
+This shows the overall size distribution, but we're only interested in the lower end to figure out which files we need to discard.
+The following plot zooms in on the smallest 30% of the files:
+#+begin_src python :results file :exports results
+from glob import glob
+from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+plt.close('all')
+sizes = np.array(sorted(Path(x).stat().st_size for x in glob('tmp/dataset/*.o')))
+x = sns.displot(sizes[:int(sizes.size*0.3)], kde=True, binwidth=30, aspect=2)
+plt.savefig('hist-part.png')
+return 'hist-part.png'
+#+end_src
+
+#+RESULTS:
+[[file:hist-part.png]]
+
+From this result, we determine a threshold and discard any file smaller than about *1500 bytes*.
+For contrast, here is the content of the smallest binary which /still contains the function of interest/:
+
+#+begin_src python :results output :exports both :wrap example
+from glob import glob
+from pathlib import Path
+from _utils import sh
+import numpy as np
+thresh = 1500
+paths = np.array([Path(x) for x in glob('tmp/dataset/*.o')])
+sizes = np.array([x.stat().st_size for x in paths])
+keep,ks = paths[sizes>thresh], sizes[sizes>thresh]
+keeps = keep[np.argsort(ks)] #names, sorted by size
+for i,f in enumerate(keeps):
+ name = str(f).split('-')[-1][:-2]
+ out = sh(f'nm -af just-symbols {f}').stdout
+ wo = out.replace(str(f).split('/')[-1][:-2], '')
+ if name in wo:
+  # print(f'{f} ({f.stat().st_size} bytes)')
+  break
+
+print(f'nm -af just-symbols {f}   # {f.stat().st_size} bytes')
+print(out)
+with open('keep.txt', 'w') as f:
+ for name in keeps[i:]:
+  print(name.name, file=f)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+nm -af just-symbols tmp/dataset/Merge-Loops-abs.o   # 1512 bytes
+__1_abs_init_tigress
+_global_argc
+_global_argv
+_global_envp
+megaInit
+Merge-Loops-abs.c
+.text
+
+#+end_example
+
+* Dataset
+Finally, we will generate a text file of these filenames which meet the criteria, copy those files into two new folders: one for originals and another with symbols removed by =strip=.
+
+#+begin_src sh :exports code :results none
+mkdir -p data/plain
+mkdir -p data/strip
+for a in $(cat keep.txt); do
+    cp tmp/dataset/$a data/plain
+    strip data/plain/$a -o data/strip/$a
+done
+#+end_src
