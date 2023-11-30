@@ -1,0 +1,282 @@
+#+OPTIONS: ^:{}
+#+begin_src sh :results output :exports results
+/home/ashroyer/mambaforge/envs/dev/bin/python3 main.py -h
+#+end_src
+
+#+RESULTS:
+#+begin_example
+usage: main.py [-h] tmp out
+
+Create musl-1.2.4 dataset, train models, report accuracy.
+
+positional arguments:
+  tmp         build directory for generating dataset
+  out         results and figures will go here
+
+options:
+  -h, --help  show this help message and exit
+#+end_example
+
+This project aims to improve the state of the art in reverse engineering and binary static analysis.
+We focus on the specific case of binary executable code without debug symbols.
+
+Statically linked binary formats are a common way to deploy programs to end-users, but they are opaque and difficult to analyze for security purposes.
+Malware authors also intentionally make their code harder to analyze using obfuscation.
+This can circumvent antivirus and malware detection software, so we specifically train on obfuscated data.
+
+# Install prerequisites using anaconda and activate python environment:
+
+# #+begin_src sh
+# conda create -f torch.yml
+# conda activate torch
+# #+end_src
+
+* Dataset
+The *main.py* program downloads [[https://musl.libc.org/][musl-1.2.4]] and extracts source code for some of its functions.
+It then creates multiple C source code versions of each function by obfuscating their sources with [[https://tigress.wtf/][Tigress]].
+Next it compiles all these sources with diverse options, resulting in a large set of obfuscated object files.
+It also compiles the source code of each function without any added obfuscation, resulting in a set of "plain" object files.
+
+The musl project uses a typical =./configure && make install= workflow, so our program parses the output of =make= to determine the baseline options required to build each function.
+Tigress obfuscates single C programs and requires that each program contains a =main= function, so our *main.py* program adds these to each file before obfuscating.
+
+Finally, we strip all symbols from the object files using [[https://pubs.opengroup.org/onlinepubs/9699919799/utilities/strip.html][GNU strip]].
+
+* Dataset preprocessing
+Starting with the stripped object files, we apply further processing for use with some of the machine learning models.
+
+#+begin_src python :results output drawer
+from _utils import fname
+from collections import Counter
+from pathlib import Path
+import numpy as np
+c1 = Counter(fname(p) for p in Path('out/o').glob('*.o'))
+c2 = Counter(fname(p) for p in Path('out/o_bb').glob('*'))
+a1 = np.array(list(c1.values()))
+a2 = np.array(list(c2.values()))
+print(f'| name | obfuscated (\mu={a1.mean():.1f},\sigma={a1.std():.1f}) | block sampled (\mu={a2.mean():.1f},\sigma={a2.std():.1f})|')
+print('|--|--|--|')
+for (k1,v1),(_,v2) in zip(sorted(c1.items()),sorted(c2.items())):
+ print(f'|{k1} | {v1} | {v2} |')
+
+#+end_src
+
+#+RESULTS:
+:results:
+| name      | object file (\mu=1132.3,\sigma=77.6) | sampled (\mu=10097.4,\sigma=8692.7) |
+|-----------+--------------------------------------+-------------------------------------|
+| abs       |                                  843 |                                2349 |
+| acos      |                                 1168 |                               15214 |
+| asin      |                                 1168 |                               14068 |
+| atan2     |                                 1084 |                               20914 |
+| ceil      |                                 1168 |                                7772 |
+| cos       |                                 1168 |                               10043 |
+| daemon    |                                 1030 |                               10385 |
+| floor     |                                 1168 |                                7387 |
+| inet_addr |                                 1140 |                                3878 |
+| inet_aton |                                 1140 |                               11469 |
+| isalnum   |                                 1222 |                                2819 |
+| memccpy   |                                 1152 |                                7533 |
+| memcmp    |                                 1072 |                                4866 |
+| memmem    |                                 1222 |                               29691 |
+| sin       |                                 1168 |                               12776 |
+| stpcpy    |                                 1156 |                                6150 |
+| stpncpy   |                                 1164 |                                8221 |
+| strchr    |                                 1129 |                                4126 |
+| strcpy    |                                 1032 |                                2365 |
+| strncpy   |                                 1074 |                                2552 |
+| strstr    |                                 1222 |                               40261 |
+| strtok    |                                 1168 |                                8126 |
+| tan       |                                 1168 |                                9534 |
+| utime     |                                 1153 |                                4442 |
+| wmemmove  |                                 1128 |                                5495 |
+:end:
+
+** Bag of Bytes
+Binaries are sequences of bytes, which means we can represent a binary of any length with a vector *X* of length 256 by storing the count of each byte *i* at *X_{i}*.
+This bag-of-words format loses information about the ordering of the original bytes.
+
+** Disassembly
+We disassemble the original bytes into a stream of text tokens using [[https://capstone-engine.org/][Capstone]]'s support for the amd64 ISA.
+Each function becomes a single string.
+Whitespace separates each token within the string.
+A small sample of these tokens looks like this:
+
+#+begin_example
+jg 0x47 add r8b, byte ptr [rcx] add dword ptr [rax], eax
+#+end_example
+
+In this representation, punctuation such as brackets and commas are part of the token.
+
+** Bag of Tokens
+After disassembly, we create another data representation using a traditional bag-of-words approach.
+First we generate a vocabulary mapping each unique token *t* to its rank in terms of how frequently it occurs in the dataset.
+Then for each function, we store the count of each token in the function *t* at *V_{t}*.
+The length of this vector is the size of the number of unique words in the training data.
+Because the test data may contain tokens not present in the training data, we add a "unknown" token to the bag of words.
+
+** Basic Block Sampling
+Finally, we use [[https://ghidra-sre.org/][Ghidra]] to extract basic blocks from each object file.
+To synthesize a new representation of a given function, we can sample any number of basic blocks from all the object files for that function.
+
+# ** Bi-Gram
+# By counting pairs of bytes, we can turn a binary file into a 2d heatmap:
+
+# #+begin_src python :results file :exports results
+# #+begin_src python :results output
+# from pathlib import Path
+# from typing import List
+# import matplotlib.pyplot as plt
+# import numpy as np
+# import pandas as pd
+# import random
+# import seaborn as sns
+
+# def bigram(pp:Path) -> (np.array,str):
+#  '''for each pair of bytes (a,b), matrix[a,b]+=1'''
+#  with open(pp,'rb') as f: data = f.read()
+#  mat = np.zeros((256,256))
+#  for a,b in zip(data,data[1:]): mat[a,b] += 1
+#  return np.log(1e-12+(mat/(1+mat.max()))), pp.stem.split('-')[-1]
+
+
+# def plot2d(filename:str,paths:List[Path],w:int,h:int) -> None:
+#  '''heatmap of bigram '''
+#  plt.clf()
+#  plt.close('all')
+#  fig,axes = plt.subplots(w,h,figsize=(3*w,3*h))
+#  axi = axes.ravel()
+#  for ax,pp in zip(axi,paths):
+#   ax.tick_params(left=False,bottom=False,labelleft=False,labelbottom=False)
+#   mat,lbl = bigram(pp)
+#   ax.title.set_text(lbl)
+#   sns.heatmap(mat,ax=ax,cmap=None,cbar=None)
+
+#  plt.subplots_adjust(wspace=0.01,hspace=0.15)
+#  plt.savefig(filename,bbox_inches='tight')
+
+# paths = np.array(list(Path('out/o').glob('*.o')))
+# names = np.array([p.stem.split('-')[-1] for p in paths])
+# plot2d('images/assorted.png',paths[:9],3,3)
+# plot2d('images/abs.png',paths[np.argsort(names)][:9],3,3)
+# return 'images/assorted.png'
+# #+end_src
+
+# #+RESULTS:
+# [[file:assorted.png]]
+
+# [[file:./abs.png]]
+
+# We can use indexes of assembly tokens as bigrams, too:
+
+# #+begin_src sh :results file :exports results
+# chmod +x movie2.py
+# ./movie2.py
+# #+end_src
+
+* Models
+We use the following models with the data representations described above:
+- kNN :: Classify a function according to its k-nearest neighbors with a custom distance metric.
+- RandomForest :: Classify a function using a "bag of bytes" representation.
+- RandomForestTokens :: Classify a function using its "bag of tokens" disassembly representation.
+- fastText :: Classify a function based on the disassembly representation using n-grams of length 5.
+
+** kNN
+To find the similarity between the raw bytes of two functions, this model uses a custom metric called Normalized Compression Distance (NCD).
+First we compress, then take the length of the compressed documents *D_{1}* and *D_{2}*.
+Next we concatenate both original documents and take the length of their compressed result as *D_{3}*.
+Finally we express the normalized distance as:
+
+$$\mathrm{NCD}(D_1, D_2, D_3) = \frac{D_3 - \min{(D_1,D_2)}}{\max{(D_1,D_2)}}$$
+
+This model reports the most frequent label from the nearest neighbors for k $\in$ (1,3,5,9).
+In case of a tie, it returns the first label of the sequence.
+
+** Random Forest
+For both the "Bag of Bytes" and "Bag of Tokens" representations, we train a [[https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html][Random Forest]] classifier from scikit-learn (version 1.3.1) with the following non-default hyperparameters:
+- n_estimators: (40,80,100,120) (trained separately)
+- n_jobs: -1
+- class_weight: "balanced"
+
+** fastText
+This [[https://fasttext.cc/][fastText]] 0.9.2 model operates on disassembled text tokens, with the following non-default hyperparameters:
+- thread: 18
+- lr: 2
+- epoch: 300
+- dim: 30
+- wordNgrams: 5
+
+** WalkyBlocky
+Confusion matrix for WalkyBlocky model...
+
+#+ATTR_HTML: :width 80%
+#+begin_src python :results file :exports results
+import _utils as U
+import pickle
+LABELS = {x:i for i,x in enumerate('''[UNK] abs acos asin atan2 ceil cos
+ daemon floor inet_addr inet_aton isalnum memccpy memcmp memmem sin stpcpy
+ stpncpy strchr strcpy strncpy strstr strtok tan utime wmemmove'''.split())}
+
+with open('stats.pkl','rb') as f:
+  stats = pickle.load(f)
+
+conf = stats['confusion']
+U.heatmap('walkyblocky.png', conf, list(LABELS.keys())[1:])
+return 'walkyblocky.png'
+#+end_src
+
+#+RESULTS:
+[[file:walkyblocky.png]]
+
+
+Training for 150 epochs...
+
+#+begin_src python :results file :exports results
+# import _utils as U
+import pickle
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+with open('stats.pkl','rb') as f:
+  stats = pickle.load(f)
+
+df = pd.DataFrame(stats['training'],columns=['loss','train accuracy','validation accuracy'])
+
+fig,ax1 = plt.subplots()
+color = '#357aa2'
+ax1.plot(df['loss'],color=color,linestyle='--',label='loss')
+ax1.set_xlabel('epoch')
+ax1.set_ylabel('loss')
+
+color = '#4fc5ad'
+ax2 = ax1.twinx()
+ax2.set_ylim([0,1])
+ax2.set_ylabel('accuracy')
+ax2.plot(df['train accuracy'],color=color,label='training accuracy')
+ax2.plot(df['validation accuracy'],color='#000',label='validation accuracy')
+
+lines1,labels1 = ax1.get_legend_handles_labels()
+lines2,labels2 = ax2.get_legend_handles_labels()
+ax2.legend(lines1+lines2, labels1+labels2, loc='center right')
+
+fig.tight_layout()
+plt.savefig('myplot.png')
+plt.savefig('../paper/img/train-loss.pdf')
+return 'myplot.png'
+#+end_src
+
+#+RESULTS:
+[[file:myplot.png]]
+
+
+* Limitations
+Currently we use [[https://gcc.gnu.org/][gcc]] (version 11.4.0) on [[https://ubuntu.com/][Ubuntu Linux]] (version 22.04.3), and target only the x86-64 instruction set architecture (ISA).
+Future improvements could add more compilers, operating systems, programming languages, and ISAs.
+
+In addition, some combinations of Tigress transformations result in invalid code.
+We discard these from our dataset, so improvements to Tigress transformations would give us a better and more diverse dataset in less time.
+
+Finally, some valid C code results in object files which do not contain a symbol matching the name of the original function.
+This may be due to a failed Tigress transformation or aggressive function inlining by the compiler.
+We currently exclude these object files from our dataset, but we would rather keep the inlined results.
