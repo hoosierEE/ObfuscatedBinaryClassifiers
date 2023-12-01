@@ -13,7 +13,7 @@ from pathlib import Path
 from itertools import islice
 from torch.utils.data import DataLoader,Dataset,random_split
 from tqdm import tqdm
-from typing import List
+from typing import List,Tuple
 import argparse
 import numpy as np
 import numpy.ma as ma
@@ -35,13 +35,13 @@ LABELS = {x:i for i,x in enumerate('''[UNK] abs acos asin atan2 ceil cos
 SLEBAL = {v:k for k,v in LABELS.items()} #reverse lookup
 
 
-def read_pkl(paths:List[Path]) -> 'data:{paths:[],blocks:[],walks:[]}, vocab:{word:count}':
+def read_pkl(paths:List[Path]) -> Tuple[dict,dict]:
   '''
   Read ../out/bo/*pkl into one big dataset.
   Create a vocabulary of unique blocks and their counts.
   Use that vocab to create block embeddings for functions (and their random walks).
   Also build a dataset
-  Return (vocab,data)
+  Return (data,vocab)
   '''
   vocab = Counter()
   data = defaultdict(dict)

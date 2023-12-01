@@ -1,5 +1,10 @@
-# FIXME: where do extract_feats and get_binaries come from???
-# They've been moved to ../_utils.py but not updated in here
+# FIXME: enlist, balance, discard_classes, and get_binaries were moved to
+# ../_utils.py but this fact is not updated in here
+# Unfortunately it's a relative import in Python. The right way to use the
+# functionality of this file is from a top level file:
+# from _utils import *
+# from skl import forest
+
 # TODO: fix imports
 from collections import defaultdict
 from pathlib import Path
@@ -9,7 +14,10 @@ from typing import Dict,List,Iterable
 import numpy as np
 import random
 import re
+import sys
 
+sys.path.append('..') # add ../ to sys path so we can import _utils.py
+from _utils import *
 
 random.seed(42)
 
