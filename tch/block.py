@@ -383,7 +383,7 @@ if __name__ == "__main__":
     _ = train_main(vocab,*ds,prefix=args.train)
     print(f'Subset includes: {" ".join(keeps)}')
 
-  with open(prefix/'vocab.pkl','rb') as f:
+  with open(args.train/'vocab.pkl','rb') as f:
     vocab = pickle.load(f)
 
   paths = sorted(args.test.glob('*.pkl'))
