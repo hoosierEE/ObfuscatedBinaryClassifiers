@@ -1,5 +1,21 @@
-#+title: Readme
+* Block Classifier
+This folder contains a PyTorch deep learning model which uses an embedding of basic blocks to classify binary data into one of N training functions.
 
+There are two different embeddings:
+1. The basic blocks in the order they appear in the original compiled object file
+2. A selection of random walks through said blocks
+
+Each of these embeddings contains positional encoding so the model is able to use information about the ordering of each embedded block.
+
+
+* Application: function detection
+In this application, we consider a small window of basic blocks within an unknown program.
+The model makes a prediction for that window, resulting in a vector of scores (one score for each function in the training set).
+We can convert these into uniform probabilities in order to set some confidence threshold.
+Below that threshold, we can say our model was unable to make a good prediction, so the "function" at that region is "unknown".
+
+The first plot below shows predictions for a fixed threshold for multiple different binary files.
+The second plot shows predictions at two different threshold values for a single binary file.
 
 #+begin_src python :results file :exports results
 from matplotlib import colormaps
